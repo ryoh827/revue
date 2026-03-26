@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -43,11 +44,17 @@ func (c *Client) Username() string {
 }
 
 func ghAuthToken() (string, error) {
-	out, err := exec.Command("gh", "auth", "token").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("gh auth token timed out after 5s")
+		}
 		return "", err
 	}
-	return string(out), nil
+	return strings.TrimSpace(string(out)), nil
 }
 
 func (c *Client) do(req *http.Request) (*http.Response, error) {
@@ -72,11 +79,18 @@ func (c *Client) fetchUsername() (string, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
 	var user struct {
 		Login string `json:"login"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return "", err
+	}
+	if user.Login == "" {
+		return "", fmt.Errorf("authenticated user login is empty")
 	}
 	return user.Login, nil
 }

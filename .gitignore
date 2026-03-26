@@ -1,3 +1,19 @@
 revue
 *.exe
 dist/
+
+# Test coverage
+*.out
+coverage.txt
+coverage.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

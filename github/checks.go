@@ -41,41 +41,51 @@ type checkRun struct {
 
 // FetchCheckStatus returns the aggregated CI check status for a given commit SHA.
 func (c *Client) FetchCheckStatus(owner, repo, sha string) (CheckStatus, error) {
-	u := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s/check-runs?per_page=100", owner, repo, sha)
-
-	resp, err := c.get(u)
-	if err != nil {
-		return CheckStatusNone, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return CheckStatusNone, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
-	}
-
-	var result checkRunsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return CheckStatusNone, err
-	}
-
-	if result.TotalCount == 0 {
-		return CheckStatusNone, nil
-	}
-
 	hasFailure := false
 	hasPending := false
-	for _, cr := range result.CheckRuns {
-		if cr.Status != "completed" {
-			hasPending = true
-			continue
+	seen := 0
+
+	for page := 1; ; page++ {
+		u := fmt.Sprintf(
+			"https://api.github.com/repos/%s/%s/commits/%s/check-runs?per_page=100&page=%d",
+			owner, repo, sha, page,
+		)
+		resp, err := c.get(u)
+		if err != nil {
+			return CheckStatusNone, err
 		}
-		if cr.Conclusion != nil {
-			switch *cr.Conclusion {
-			case "failure", "timed_out", "action_required":
-				hasFailure = true
-			case "cancelled":
-				hasFailure = true
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			return CheckStatusNone, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		}
+
+		var result checkRunsResponse
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if err != nil {
+			return CheckStatusNone, err
+		}
+
+		if page == 1 && result.TotalCount == 0 {
+			return CheckStatusNone, nil
+		}
+
+		for _, cr := range result.CheckRuns {
+			seen++
+			if cr.Status != "completed" {
+				hasPending = true
+				continue
 			}
+			if cr.Conclusion != nil {
+				switch *cr.Conclusion {
+				case "failure", "timed_out", "action_required", "cancelled":
+					hasFailure = true
+				}
+			}
+		}
+
+		if len(result.CheckRuns) < 100 || seen >= result.TotalCount {
+			break
 		}
 	}
 
