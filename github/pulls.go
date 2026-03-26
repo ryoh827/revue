@@ -48,30 +48,37 @@ func (c *Client) FetchMyPRs() ([]PullRequest, error) {
 }
 
 func (c *Client) searchPRs(query string) ([]PullRequest, error) {
-	u := fmt.Sprintf("https://api.github.com/search/issues?q=%s&sort=updated&order=desc&per_page=50",
-		url.QueryEscape(query))
+	var all []PullRequest
+	for page := 1; ; page++ {
+		u := fmt.Sprintf("https://api.github.com/search/issues?q=%s&sort=updated&order=desc&per_page=50&page=%d",
+			url.QueryEscape(query), page)
 
-	resp, err := c.get(u)
-	if err != nil {
-		return nil, err
+		resp, err := c.get(u)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		}
+
+		var result searchResult
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		for i := range result.Items {
+			result.Items[i].Repo = extractRepo(result.Items[i].HTMLURL)
+		}
+		all = append(all, result.Items...)
+
+		if len(result.Items) < 50 {
+			break
+		}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
-	}
-
-	var result searchResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	// Extract repo from html_url: https://github.com/owner/repo/pull/123
-	for i := range result.Items {
-		result.Items[i].Repo = extractRepo(result.Items[i].HTMLURL)
-	}
-
-	return result.Items, nil
+	return all, nil
 }
 
 // extractRepo extracts "owner/repo" from a PR HTML URL.
